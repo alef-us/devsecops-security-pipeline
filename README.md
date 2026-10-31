@@ -60,9 +60,8 @@ against that temporary directory. Never commit the fixture.
 checks out source, installs pinned development tools, runs unit tests, runs Bandit
 and pip-audit, runs Gitleaks, validates workflow permissions, and uploads reports.
 The workflow has read-only repository contents permission; no secrets are exposed
-to application steps. Third-party actions are pinned to immutable commit SHAs
-where available. The Gitleaks action currently uses its documented release tag
-because its action release is managed separately from the scanner binary.
+to application steps. All third-party actions are pinned to full commit SHAs, with
+the corresponding release recorded in a trailing comment.
 
 The workflow fails if tests or mandatory security checks fail. A scanner outage is
 also a failure; it must not be interpreted as a clean result.

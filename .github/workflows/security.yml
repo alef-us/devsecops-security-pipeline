@@ -41,11 +41,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate workflow permissions
-        run: python -c "from pathlib import Path; text=Path('.github/workflows/security.yml').read_text(); assert 'permissions:' in text and 'contents: read' in text"
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path(".github/workflows/security.yml").read_text(encoding="utf-8")
+          assert "permissions:" in text, "workflow must declare explicit permissions"
+          assert "contents: read" in text, "workflow must use read-only contents access"
+          print("workflow permission check passed")
+          PY
 
       - name: Publish scanner reports
         if: always()
-        uses: actions/upload-artifact@a167fd8e922f413eeb5cb6a6b3758e2d7ae4b353 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: security-reports
           path: |
