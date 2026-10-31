@@ -17,8 +17,10 @@ Do not disclose exploitable details publicly until a fix or mitigation is availa
 - pip-audit blocks any declared or installed package version that has a known
   advisory. pip-audit publishes no severity rating, so the gate does not invent
   one; the fix is to upgrade the package.
-- Gitleaks blocks detected secrets. A fake credential used for a negative test must
-  be isolated in a dedicated fixture and must never authenticate to a real service.
+- Gitleaks blocks every match, scanning commit history as well as the working
+  tree. Values are redacted, so a detected secret is never written to a log, an
+  artifact, or the job summary. A fake credential used for a negative test is
+  generated in a temporary directory and is never committed.
 - A control that cannot run exits with code 2 and fails the build. An unavailable
   scanner is never reported as a pass.
 - No finding is suppressed without a written justification. `.gitleaks.toml`

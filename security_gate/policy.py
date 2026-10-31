@@ -45,6 +45,18 @@ def is_blocking_dependency_finding(finding: Finding) -> bool:
     return True
 
 
+def is_blocking_secret_finding(finding: Finding) -> bool:
+    """Return True when a secret finding violates the policy.
+
+    Every match blocks. A credential that reaches version control must be
+    treated as compromised and rotated, so there is no threshold to tune. False
+    positives are handled by documenting a justified allowlist entry in
+    ``.gitleaks.toml``, never by lowering this rule.
+    """
+    del finding  # Every match blocks, regardless of scanner labels.
+    return True
+
+
 def overall_exit_code(results: list[ControlResult]) -> int:
     """Translate control results into a process exit code.
 

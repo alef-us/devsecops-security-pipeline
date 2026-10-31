@@ -13,6 +13,7 @@ HTTP client -> Python standard-library service -> validated JSON response
 security_gate (policy engine)
   |-- sast control         -> Bandit    -> normalised findings -> policy -> exit code
   |-- dependencies control -> pip-audit -> normalised findings -> policy -> exit code
+  |-- secrets control      -> Gitleaks  -> normalised findings -> policy -> exit code
   +-- summary -> GitHub step summary + artifact
 ```
 
@@ -44,7 +45,7 @@ Then request `http://127.0.0.1:8000/health` or
 python -m security_gate            # all controls, policy applied, exit code set
 python -m security_gate --control sast
 python -m security_gate --control dependencies
-gitleaks detect --config .gitleaks.toml --no-banner
+python -m security_gate --control secrets
 ```
 
 Gate exit codes:
@@ -116,12 +117,63 @@ advisory is gone, and run the test suite to confirm the upgrade broke nothing.
 If no fix exists, the finding needs a documented, reviewed decision rather than
 a silent suppression.
 
+### Secret detection policy
+
+Gitleaks scans the repository **including its commit history**, so CI checks out
+with `fetch-depth: 0`. This matters: deleting a credential from the latest
+commit does not remove it from the commits that came before, and a shallow
+clone would hide exactly that case.
+
+Every match blocks. A credential that reaches version control must be treated as
+compromised, so there is no threshold to tune. The order of remediation is:
+
+1. **Rotate the credential first.** Until it is revoked, the leak is live.
+2. Remove it from the working tree and replace it with a secret store or an
+   environment variable supplied at runtime.
+3. Only then consider rewriting history, through an agreed maintenance process.
+   Rewriting history alone is not a fix, because the old commit may already have
+   been cloned, cached, or forked.
+
+Gitleaks always runs with `--redact`, and the gate never reads the `Secret`
+field of a report. A detected value is therefore not written to a log, an
+artifact, or the job summary. `tests/test_security_gate.py` asserts this.
+
+**Handling a false positive.** Confirm the string cannot authenticate anywhere,
+then add a narrow, commented allowlist entry to `.gitleaks.toml` naming the file
+and the reason. Never widen a rule, disable the control, or allowlist a whole
+directory. `.gitleaks.toml` currently defines no allowlist entries, because
+nothing has needed one.
+
+#### Proving the control works
+
+The fake credential is **generated in a temporary directory at test time and is
+never committed**, so the repository stays clean while the control is still
+proven to work. It is structurally valid but uses sequential placeholder
+characters and cannot authenticate to any service. The tests assert that
+Gitleaks reports it, that a clean directory passes, that the repository history
+is clean, and that the fake value never appears in the rendered summary.
+
+The credential is also **assembled at runtime from separate parts** rather than
+stored as a literal. That is not cosmetic: an earlier version of this test held
+the value as a plain string, and GitHub push protection rejected the push. That
+is the correct outcome, and the right response was to stop storing a
+credential-shaped literal, not to click the bypass link. The repository now
+passes two independent secret controls rather than one.
+
+#### Installing Gitleaks
+
+CI downloads the pinned release and verifies its published SHA-256 checksum
+before use, so a tampered archive fails the build instead of running. Locally,
+install Gitleaks on `PATH` or point `GITLEAKS_PATH` at the binary; the control
+reports `UNAVAILABLE` rather than passing when it cannot find one.
+
 ## CI workflow
 
 `.github/workflows/security.yml` runs on pushes to `main` and pull requests. It
-checks out source, installs pinned development tools, runs unit tests, runs the
-security gate (static analysis and dependency auditing), runs Gitleaks,
-validates workflow permissions, and uploads the security summary.
+checks out source with full history, installs pinned development tools, installs
+a checksum-verified Gitleaks binary, runs unit tests, runs the security gate
+(static analysis, dependency auditing, and secret detection), validates workflow
+permissions, and uploads the security summary.
 The workflow has read-only repository contents permission; no secrets are exposed
 to application steps. All third-party actions are pinned to full commit SHAs, with
 the corresponding release recorded in a trailing comment.

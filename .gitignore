@@ -6,3 +6,4 @@ __pycache__/
 bandit-report.json
 pip-audit-report.json
 security-summary.md
+.tools/

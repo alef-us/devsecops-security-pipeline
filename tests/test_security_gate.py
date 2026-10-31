@@ -7,10 +7,11 @@ code for a policy violation.
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
-from security_gate import bandit_control, cli, pip_audit_control
+from security_gate import bandit_control, cli, gitleaks_control, pip_audit_control
 from security_gate.models import ControlResult, ControlStatus, Finding, Severity
 from security_gate.policy import (
     EXIT_CONTROL_UNAVAILABLE,
@@ -171,6 +172,93 @@ class DependencyReportTests(unittest.TestCase):
         self.assertEqual(overall_exit_code([result]), EXIT_CONTROL_UNAVAILABLE)
 
 
+class SecretReportTests(unittest.TestCase):
+    LEAK_PAYLOAD = [
+        {
+            "RuleID": "slack-bot-token",
+            "Description": "Identified a Slack Bot token",
+            "File": "config.yml",
+            "StartLine": 7,
+            "Commit": "0123456789abcdef0123456789abcdef01234567",
+            "Secret": "REDACTED",
+        }
+    ]
+
+    def test_any_match_blocks(self):
+        result = gitleaks_control.evaluate_report(self.LEAK_PAYLOAD)
+        self.assertEqual(result.status, ControlStatus.FAILED)
+        self.assertEqual(overall_exit_code([result]), EXIT_POLICY_VIOLATION)
+
+    def test_finding_records_file_line_and_commit(self):
+        finding = gitleaks_control.parse_report(self.LEAK_PAYLOAD)[0]
+        self.assertEqual(finding.identifier, "slack-bot-token")
+        self.assertIn("config.yml:7", finding.location)
+        self.assertIn("commit 0123456789ab", finding.location)
+
+    def test_empty_report_passes(self):
+        self.assertEqual(gitleaks_control.evaluate_report([]).status, ControlStatus.PASSED)
+
+
+class SecretDetectionLiveTests(unittest.TestCase):
+    """Negative tests that run the real secret scanner.
+
+    The fake credential is written to a temporary directory at test time and is
+    never committed, so the repository itself stays clean while the control is
+    still proven to work.
+    """
+
+    #: The credential is assembled at runtime so that no credential-shaped
+    #: literal is ever stored in the repository. An earlier version of this test
+    #: held the value as a plain string and GitHub push protection blocked the
+    #: push, which is exactly what a second, independent control should do. The
+    #: parts below are sequential placeholders and cannot authenticate anywhere.
+    CREDENTIAL_PARTS = ("xoxb", "123456789012", "123456789012", "abcdefghijklmnopqrstuvwx")
+
+    @classmethod
+    def fake_credential(cls) -> str:
+        return "-".join(cls.CREDENTIAL_PARTS)
+
+    def setUp(self):
+        if gitleaks_control.find_executable() is None:
+            self.skipTest("gitleaks is not installed; set GITLEAKS_PATH or add it to PATH")
+
+    def test_fake_credential_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "settings.yml"
+            target.write_text(f"slack_token: {self.fake_credential()}\n", encoding="utf-8")
+            result = gitleaks_control.scan_directory(directory)
+
+        self.assertEqual(result.status, ControlStatus.FAILED, result.detail)
+        self.assertIn("slack-bot-token", {f.identifier for f in result.blocking_findings})
+
+    def test_detected_secret_value_is_never_printed(self):
+        credential = self.fake_credential()
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "settings.yml"
+            target.write_text(f"slack_token: {credential}\n", encoding="utf-8")
+            result = gitleaks_control.scan_directory(directory)
+
+        summary = cli.render_summary([result])
+        self.assertNotIn(credential, summary)
+        self.assertNotIn(credential, result.detail)
+
+    def test_clean_directory_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "settings.yml").write_text("timeout: 30\n", encoding="utf-8")
+            result = gitleaks_control.scan_directory(directory)
+        self.assertEqual(result.status, ControlStatus.PASSED, result.detail)
+
+    def test_repository_history_contains_no_secrets(self):
+        result = gitleaks_control.scan(str(Path(__file__).resolve().parent.parent))
+        if result.status is ControlStatus.UNAVAILABLE:
+            self.skipTest(result.detail)
+        self.assertEqual(
+            result.status,
+            ControlStatus.PASSED,
+            "\n".join(f.summary_line() for f in result.blocking_findings),
+        )
+
+
 class LiveScannerTests(unittest.TestCase):
     """End-to-end checks that run the real scanner."""
 
@@ -219,8 +307,6 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("B000", summary)
 
     def test_summary_file_is_written(self):
-        import tempfile
-
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "summary.md"
             exit_code = cli.main(["--control", "sast", "--summary-file", str(target)])

@@ -7,14 +7,15 @@ import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from security_gate import bandit_control, pip_audit_control
+from security_gate import bandit_control, gitleaks_control, pip_audit_control
 from security_gate.models import ControlResult, ControlStatus
 from security_gate.policy import overall_exit_code
 
-#: Registry of available controls. Later stages register additional scanners here.
+#: Registry of available controls, each applying the policy to one scanner.
 CONTROLS: dict[str, Callable[[], ControlResult]] = {
     bandit_control.CONTROL_NAME: bandit_control.scan,
     pip_audit_control.CONTROL_NAME: pip_audit_control.scan,
+    gitleaks_control.CONTROL_NAME: gitleaks_control.scan,
 }
 
 _STATUS_MARKER = {
