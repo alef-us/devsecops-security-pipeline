@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures are generated in temporary directories by tests and are not committed."
+paths = ["^security/demo_vulnerable\\.py$"]

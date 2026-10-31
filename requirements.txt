@@ -1,0 +1,2 @@
+# The application uses only Python's standard library.
+# Security tooling is installed separately by CI and the documented local commands.

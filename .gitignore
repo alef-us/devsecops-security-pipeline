@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.bandit/
+*.pyc
+bandit-report.json
+pip-audit-report.json
