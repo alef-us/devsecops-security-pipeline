@@ -21,6 +21,9 @@ Do not disclose exploitable details publicly until a fix or mitigation is availa
   tree. Values are redacted, so a detected secret is never written to a log, an
   artifact, or the job summary. A fake credential used for a negative test is
   generated in a temporary directory and is never committed.
+- zizmor blocks a workflow finding whose severity is `MEDIUM` or higher,
+  regardless of confidence. The workflow is attack surface and the review cost
+  is low, so this is stricter than the static analysis rule.
 - A control that cannot run exits with code 2 and fails the build. An unavailable
   scanner is never reported as a pass.
 - No finding is suppressed without a written justification. `.gitleaks.toml`

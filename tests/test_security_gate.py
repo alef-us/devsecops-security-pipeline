@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from security_gate import bandit_control, cli, gitleaks_control, pip_audit_control
+from security_gate import bandit_control, cli, gitleaks_control, pip_audit_control, zizmor_control
 from security_gate.models import ControlResult, ControlStatus, Finding, Severity
 from security_gate.policy import (
     EXIT_CONTROL_UNAVAILABLE,
@@ -19,6 +19,7 @@ from security_gate.policy import (
     EXIT_POLICY_VIOLATION,
     is_blocking_dependency_finding,
     is_blocking_sast_finding,
+    is_blocking_workflow_finding,
     overall_exit_code,
 )
 
@@ -250,6 +251,97 @@ class SecretDetectionLiveTests(unittest.TestCase):
 
     def test_repository_history_contains_no_secrets(self):
         result = gitleaks_control.scan(str(Path(__file__).resolve().parent.parent))
+        if result.status is ControlStatus.UNAVAILABLE:
+            self.skipTest(result.detail)
+        self.assertEqual(
+            result.status,
+            ControlStatus.PASSED,
+            "\n".join(f.summary_line() for f in result.blocking_findings),
+        )
+
+
+class WorkflowAuditTests(unittest.TestCase):
+    def test_severity_threshold_ignores_confidence(self):
+        finding = make_finding(Severity.MEDIUM, Severity.LOW)
+        self.assertTrue(is_blocking_workflow_finding(finding))
+
+    def test_low_severity_does_not_block(self):
+        self.assertFalse(is_blocking_workflow_finding(make_finding(Severity.LOW, Severity.HIGH)))
+
+    def test_unknown_severity_blocks(self):
+        self.assertTrue(is_blocking_workflow_finding(make_finding(Severity.UNKNOWN, Severity.LOW)))
+
+    def test_report_is_normalised(self):
+        payload = [
+            {
+                "ident": "template-injection",
+                "desc": "code injection via template expansion",
+                "url": "https://docs.zizmor.sh/audits/#template-injection",
+                "determinations": {"severity": "High", "confidence": "High"},
+                "locations": [
+                    {
+                        "symbolic": {
+                            "key": {"Local": {"verbatim_path": ".github/workflows\\x.yml"}},
+                            "annotation": "this step",
+                        },
+                        "concrete": {"location": {"start_point": {"row": 7}}},
+                    }
+                ],
+            }
+        ]
+        finding = zizmor_control.parse_report(payload)[0]
+        self.assertEqual(finding.severity, Severity.HIGH)
+        # zizmor rows are zero-based; reviewers count lines from one.
+        self.assertIn(".github/workflows/x.yml:8", finding.location)
+        self.assertIn("this step", finding.location)
+
+    def test_empty_report_passes(self):
+        self.assertEqual(zizmor_control.evaluate_report([]).status, ControlStatus.PASSED)
+
+
+class WorkflowAuditLiveTests(unittest.TestCase):
+    """Negative tests that run the real workflow auditor.
+
+    The insecure workflow is written to a temporary directory at test time. It
+    is deliberately never committed under .github/workflows, because GitHub
+    would then schedule it.
+    """
+
+    INSECURE_WORKFLOW = """
+name: unsafe
+on: pull_request_target
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "title is ${{ github.event.pull_request.title }}"
+"""
+
+    def setUp(self):
+        if zizmor_control.find_executable() is None:
+            self.skipTest("zizmor is not installed; set ZIZMOR_PATH or add it to PATH")
+
+    def test_insecure_workflow_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workflows = Path(directory) / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "unsafe.yml").write_text(self.INSECURE_WORKFLOW, encoding="utf-8")
+            result = zizmor_control.scan([directory])
+
+        self.assertEqual(result.status, ControlStatus.FAILED, result.detail)
+        reported = {finding.identifier for finding in result.blocking_findings}
+        for expected in (
+            "dangerous-triggers",
+            "template-injection",
+            "unpinned-uses",
+            "excessive-permissions",
+        ):
+            self.assertIn(expected, reported)
+        self.assertEqual(overall_exit_code([result]), EXIT_POLICY_VIOLATION)
+
+    def test_project_workflows_pass(self):
+        result = zizmor_control.scan()
         if result.status is ControlStatus.UNAVAILABLE:
             self.skipTest(result.detail)
         self.assertEqual(

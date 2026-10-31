@@ -57,6 +57,20 @@ def is_blocking_secret_finding(finding: Finding) -> bool:
     return True
 
 
+#: A workflow finding blocks when its severity reaches this level, regardless of
+#: the scanner's confidence. The workflow surface here is a single file, so
+#: manually reviewing a low-confidence finding is cheap, while a missed
+#: workflow weakness can expose the job token to every later step.
+WORKFLOW_BLOCKING_SEVERITY = Severity.MEDIUM
+
+
+def is_blocking_workflow_finding(finding: Finding) -> bool:
+    """Return True when a workflow finding violates the policy."""
+    return (
+        finding.severity is Severity.UNKNOWN or finding.severity >= WORKFLOW_BLOCKING_SEVERITY
+    )
+
+
 def overall_exit_code(results: list[ControlResult]) -> int:
     """Translate control results into a process exit code.
 

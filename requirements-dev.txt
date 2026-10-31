@@ -3,3 +3,4 @@
 bandit==1.8.6
 pip-audit==2.9.0
 pytest==9.0.3
+zizmor==1.31.1

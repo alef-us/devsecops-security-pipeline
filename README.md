@@ -14,6 +14,7 @@ security_gate (policy engine)
   |-- sast control         -> Bandit    -> normalised findings -> policy -> exit code
   |-- dependencies control -> pip-audit -> normalised findings -> policy -> exit code
   |-- secrets control      -> Gitleaks  -> normalised findings -> policy -> exit code
+  |-- workflows control    -> zizmor    -> normalised findings -> policy -> exit code
   +-- summary -> GitHub step summary + artifact
 ```
 
@@ -46,6 +47,7 @@ python -m security_gate            # all controls, policy applied, exit code set
 python -m security_gate --control sast
 python -m security_gate --control dependencies
 python -m security_gate --control secrets
+python -m security_gate --control workflows
 ```
 
 Gate exit codes:
@@ -167,13 +169,64 @@ before use, so a tampered archive fails the build instead of running. Locally,
 install Gitleaks on `PATH` or point `GITLEAKS_PATH` at the binary; the control
 reports `UNAVAILABLE` rather than passing when it cannot find one.
 
+### Workflow audit policy
+
+The workflow itself is attack surface, so it is audited with
+[zizmor](https://docs.zizmor.sh/). A workflow finding blocks when its severity
+is `MEDIUM` or higher, **regardless of the scanner's confidence**. That is
+stricter than the static analysis rule on purpose: this project has one
+workflow file, so reviewing a low-confidence finding costs minutes, while a
+missed workflow weakness exposes the job token to every later step.
+
+This control replaced an earlier step that asserted the workflow file contained
+the strings `permissions:` and `contents: read`. That check could not fail in
+any useful way, because it passed as long as the text appeared anywhere in the
+file, including inside a comment.
+
+#### What the audit found here
+
+The first real run was not clean. zizmor reported `artipacked`: `actions/checkout`
+persists the job token in `.git/config` by default, where a later step or an
+uploaded artifact can expose it. No step in this workflow pushes to the
+repository, so the fix was `persist-credentials: false`.
+
+#### Hardening applied to the workflow
+
+| Risk | Mitigation |
+|---|---|
+| Excessive token scope | `permissions: contents: read` at workflow **and** job level |
+| Credential persistence | `persist-credentials: false` on checkout |
+| Supply-chain tampering in actions | Every action pinned to a full commit SHA with its release in a comment |
+| Supply-chain tampering in binaries | Gitleaks archive verified against its published SHA-256 checksum |
+| Untrusted pull-request code | Triggered by `pull_request`, never `pull_request_target`; no secrets are exposed to any step |
+| Script injection | No `${{ }}` expansion of event data into a shell command |
+| Unpinned runner | Pinned to `ubuntu-24.04` rather than `ubuntu-latest` |
+
+zizmor runs with `--offline`, so it needs no token and no network, and its
+result is reproducible. The audits that require the GitHub API are skipped as a
+result; `unpinned-uses`, `template-injection`, `dangerous-triggers`, and
+`excessive-permissions` all run offline.
+
+zizmor maps severity onto distinct exit codes, which makes "a finding was
+reported" indistinguishable from "the tool crashed". The control therefore runs
+it with `--no-exit-codes` and decides from the JSON report, so a non-zero exit
+unambiguously means the tool failed.
+
+#### Proving the control works
+
+The tests write a deliberately insecure workflow to a temporary directory and
+assert that zizmor reports `dangerous-triggers`, `template-injection`,
+`unpinned-uses`, and `excessive-permissions`, and that the gate returns a
+failing exit code. The fixture is never committed under `.github/workflows`,
+because GitHub would then schedule it.
+
 ## CI workflow
 
 `.github/workflows/security.yml` runs on pushes to `main` and pull requests. It
 checks out source with full history, installs pinned development tools, installs
 a checksum-verified Gitleaks binary, runs unit tests, runs the security gate
-(static analysis, dependency auditing, and secret detection), validates workflow
-permissions, and uploads the security summary.
+(static analysis, dependency auditing, secret detection, and workflow
+auditing), and uploads the security summary.
 The workflow has read-only repository contents permission; no secrets are exposed
 to application steps. All third-party actions are pinned to full commit SHAs, with
 the corresponding release recorded in a trailing comment.

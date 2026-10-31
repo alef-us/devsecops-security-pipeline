@@ -20,6 +20,9 @@ jobs:
           # Secret scanning needs the full history: removing a credential from
           # the latest commit does not remove it from earlier commits.
           fetch-depth: 0
+          # Do not leave the job token in .git/config, where a later step or an
+          # uploaded artifact could expose it. No step here pushes to the repo.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -54,17 +57,6 @@ jobs:
 
       - name: Run security gate
         run: python -m security_gate --summary-file security-summary.md
-
-      - name: Validate workflow permissions
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          text = Path(".github/workflows/security.yml").read_text(encoding="utf-8")
-          assert "permissions:" in text, "workflow must declare explicit permissions"
-          assert "contents: read" in text, "workflow must use read-only contents access"
-          print("workflow permission check passed")
-          PY
 
       - name: Publish scanner reports
         if: always()
