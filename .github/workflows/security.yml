@@ -29,8 +29,8 @@ jobs:
       - name: Run application tests
         run: python -m pytest
 
-      - name: Run Bandit
-        run: python -m bandit -r app.py -f json -o bandit-report.json
+      - name: Run static analysis security gate
+        run: python -m security_gate --control sast --summary-file security-summary.md
 
       - name: Run dependency audit
         run: python -m pip_audit -r requirements.txt -f json -o pip-audit-report.json
@@ -57,6 +57,6 @@ jobs:
         with:
           name: security-reports
           path: |
-            bandit-report.json
+            security-summary.md
             pip-audit-report.json
           if-no-files-found: warn

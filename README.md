@@ -9,15 +9,18 @@ main subject.
 
 ```text
 HTTP client -> Python standard-library service -> validated JSON response
-                    |
-                    +-> pytest
-                    +-> Bandit
-                    +-> pip-audit
-                    +-> Gitleaks
+
+security_gate (policy engine)
+  |-- sast control -> Bandit -> normalised findings -> policy -> exit code
+  +-- summary -> GitHub step summary + artifact
 ```
 
 The service exposes `GET /health` and `GET /hello?name=...`. It has no database,
 authentication, external service, container, or production credential.
+
+Scanner output is normalised into a shared finding model before the policy is
+applied, so the thresholds live in one place (`security_gate/policy.py`) instead
+of being spread across workflow steps.
 
 ## Local setup
 
@@ -37,28 +40,55 @@ Then request `http://127.0.0.1:8000/health` or
 ## Security checks
 
 ```powershell
-python -m bandit -r app.py -f json -o bandit-report.json
+python -m security_gate            # all controls, policy applied, exit code set
+python -m security_gate --control sast
 python -m pip_audit -r requirements.txt
 gitleaks detect --config .gitleaks.toml --no-banner
 ```
 
-The committed application is expected to pass. `security/demo_vulnerable.py` is
-an isolated negative-test fixture and is intentionally not scanned by the CI
-production-code command. To demonstrate detection locally:
+Gate exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | Every control passed the documented policy |
+| 1 | A control reported a finding that violates the policy |
+| 2 | A control could not run; this is a failure, never a pass |
+
+### Static analysis policy
+
+A Bandit finding blocks the build when **both** its severity and its confidence
+are `MEDIUM` or higher. A finding below that threshold is printed under
+"Findings for manual triage" and does not block. An unrecognised severity label
+is treated as blocking, because a label the gate cannot interpret has not been
+shown to be harmless.
+
+The production scan currently reports two low-severity Bandit findings
+(`B404` and `B603`) in `security_gate/bandit_control.py`. They are genuine
+matches, not false positives: the module really does invoke `subprocess`. They
+do not block because the command is a fixed argument list, is never passed
+through a shell, and never includes user-controlled input. They are left visible
+rather than suppressed so that the triage decision stays reviewable.
+
+### Proving the control works
+
+`tests/fixtures/insecure_example.py` is an isolated negative-test fixture
+containing a real `subprocess` call with `shell=True`. It is never imported by
+the application, never executed by the tests, and never served. The suite in
+`tests/test_security_gate.py` asserts that Bandit reports `B602` for it, that
+the gate returns a non-zero exit code, and that the fixture is excluded from the
+production scan. If a scanner silently stops detecting the pattern, those tests
+fail.
 
 ```powershell
-python -m bandit security/demo_vulnerable.py
+python -m pytest tests/test_security_gate.py -v
 ```
-
-For secret detection, create a temporary file containing an obviously fake
-credential (for example `not-a-real-credential-for-tests`) and run Gitleaks
-against that temporary directory. Never commit the fixture.
 
 ## CI workflow
 
 `.github/workflows/security.yml` runs on pushes to `main` and pull requests. It
-checks out source, installs pinned development tools, runs unit tests, runs Bandit
-and pip-audit, runs Gitleaks, validates workflow permissions, and uploads reports.
+checks out source, installs pinned development tools, runs unit tests, runs the
+static analysis security gate, runs pip-audit, runs Gitleaks, validates workflow
+permissions, and uploads the security summary and scanner reports.
 The workflow has read-only repository contents permission; no secrets are exposed
 to application steps. All third-party actions are pinned to full commit SHAs, with
 the corresponding release recorded in a trailing comment.

@@ -2,10 +2,10 @@
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
-[tool.bandit]
-exclude_dirs = ["tests", ".venv"]
-skips = ["B101"]
-
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+# Bandit is not configured here on purpose. The security gate passes explicit
+# production targets on the command line (see security_gate/bandit_control.py),
+# so the scan surface cannot be widened or narrowed by editing a config file.

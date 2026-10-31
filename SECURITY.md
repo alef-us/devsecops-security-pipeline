@@ -11,11 +11,17 @@ Do not disclose exploitable details publicly until a fix or mitigation is availa
 
 ## Security gates
 
-- Bandit blocks findings in production code using its default high-confidence rules.
+- The static analysis gate blocks a Bandit finding whose severity and confidence
+  are both `MEDIUM` or higher, and blocks any finding whose severity label the
+  gate cannot interpret. Lower findings are reported for manual triage.
 - pip-audit blocks an unavailable scan or a vulnerability found in the declared
   dependency set; the repository currently has no runtime dependencies.
 - Gitleaks blocks detected secrets. A fake credential used for a negative test must
-  be generated in a temporary directory and never committed.
+  be isolated in a dedicated fixture and must never authenticate to a real service.
+- A control that cannot run exits with code 2 and fails the build. An unavailable
+  scanner is never reported as a pass.
+- No finding is suppressed without a written justification. `.gitleaks.toml`
+  currently defines no allowlist entries.
 - Ambiguous findings require manual investigation. Deleting a secret from the
   latest commit does not remove it from Git history; rotate a real credential and
   rewrite history only through an agreed repository-maintenance process.

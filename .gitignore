@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 bandit-report.json
 pip-audit-report.json
+security-summary.md
