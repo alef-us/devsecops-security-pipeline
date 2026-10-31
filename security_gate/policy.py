@@ -32,6 +32,19 @@ def is_blocking_sast_finding(finding: Finding) -> bool:
     return severity_blocks and confidence_blocks
 
 
+def is_blocking_dependency_finding(finding: Finding) -> bool:
+    """Return True when a dependency finding violates the policy.
+
+    pip-audit reports whether a package version is affected by a known advisory,
+    but it does not attach a severity rating. Inventing one would be dishonest,
+    so this project uses a simple, defensible rule for its small dependency set:
+    any package version with a known advisory blocks the build. The remediation
+    is to upgrade the package, not to lower the threshold.
+    """
+    del finding  # The rule intentionally does not depend on scanner labels.
+    return True
+
+
 def overall_exit_code(results: list[ControlResult]) -> int:
     """Translate control results into a process exit code.
 

@@ -10,12 +10,13 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from security_gate import bandit_control, cli
+from security_gate import bandit_control, cli, pip_audit_control
 from security_gate.models import ControlResult, ControlStatus, Finding, Severity
 from security_gate.policy import (
     EXIT_CONTROL_UNAVAILABLE,
     EXIT_OK,
     EXIT_POLICY_VIOLATION,
+    is_blocking_dependency_finding,
     is_blocking_sast_finding,
     overall_exit_code,
 )
@@ -115,6 +116,61 @@ class BanditReportTests(unittest.TestCase):
         self.assertEqual(result.blocking_findings, [])
 
 
+class DependencyReportTests(unittest.TestCase):
+    VULNERABLE_PAYLOAD = {
+        "dependencies": [
+            {"name": "safe-package", "version": "1.0.0", "vulns": []},
+            {
+                "name": "vulnerable-package",
+                "version": "1.2.3",
+                "vulns": [
+                    {
+                        "id": "PYSEC-0000-1",
+                        "fix_versions": ["1.2.4"],
+                        "aliases": ["CVE-0000-0001"],
+                        "description": "example advisory",
+                    }
+                ],
+            },
+        ],
+        "fixes": [],
+    }
+
+    def test_any_known_advisory_blocks(self):
+        result = pip_audit_control.evaluate_report(self.VULNERABLE_PAYLOAD)
+        self.assertEqual(result.status, ControlStatus.FAILED)
+        self.assertEqual(len(result.blocking_findings), 1)
+        self.assertEqual(overall_exit_code([result]), EXIT_POLICY_VIOLATION)
+
+    def test_finding_records_the_remediation(self):
+        finding = pip_audit_control.parse_report(self.VULNERABLE_PAYLOAD)[0]
+        self.assertEqual(finding.location, "vulnerable-package==1.2.3")
+        self.assertIn("fixed in 1.2.4", finding.description)
+        self.assertIn("CVE-0000-0001", finding.description)
+
+    def test_missing_fix_version_is_stated_explicitly(self):
+        payload = {
+            "dependencies": [
+                {"name": "p", "version": "1", "vulns": [{"id": "X", "fix_versions": []}]}
+            ]
+        }
+        self.assertIn("no fix available", pip_audit_control.parse_report(payload)[0].description)
+
+    def test_severity_is_not_invented(self):
+        finding = pip_audit_control.parse_report(self.VULNERABLE_PAYLOAD)[0]
+        self.assertEqual(finding.severity, Severity.UNKNOWN)
+        self.assertTrue(is_blocking_dependency_finding(finding))
+
+    def test_clean_report_passes(self):
+        payload = {"dependencies": [{"name": "p", "version": "1", "vulns": []}], "fixes": []}
+        self.assertEqual(pip_audit_control.evaluate_report(payload).status, ControlStatus.PASSED)
+
+    def test_report_without_dependency_list_is_unavailable(self):
+        result = pip_audit_control.evaluate_report({"fixes": []})
+        self.assertEqual(result.status, ControlStatus.UNAVAILABLE)
+        self.assertEqual(overall_exit_code([result]), EXIT_CONTROL_UNAVAILABLE)
+
+
 class LiveScannerTests(unittest.TestCase):
     """End-to-end checks that run the real scanner."""
 
@@ -135,6 +191,16 @@ class LiveScannerTests(unittest.TestCase):
     def test_fixture_is_excluded_from_the_production_scan(self):
         scanned = {finding.location for finding in bandit_control.scan().findings}
         self.assertFalse(any("insecure_example" in location for location in scanned))
+
+    def test_installed_environment_has_no_known_vulnerabilities(self):
+        result = pip_audit_control.scan()
+        if result.status is ControlStatus.UNAVAILABLE:
+            self.skipTest(f"vulnerability service unavailable: {result.detail}")
+        self.assertEqual(
+            result.status,
+            ControlStatus.PASSED,
+            "\n".join(finding.summary_line() for finding in result.blocking_findings),
+        )
 
 
 class SummaryTests(unittest.TestCase):

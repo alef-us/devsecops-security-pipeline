@@ -1,3 +1,5 @@
+# Security and test tooling, pinned so that a scan is reproducible.
+# pytest is held at 9.0.3 or later: 8.3.5 is affected by PYSEC-2026-1845.
 bandit==1.8.6
 pip-audit==2.9.0
-pytest==8.3.5
+pytest==9.0.3

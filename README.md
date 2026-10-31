@@ -11,7 +11,8 @@ main subject.
 HTTP client -> Python standard-library service -> validated JSON response
 
 security_gate (policy engine)
-  |-- sast control -> Bandit -> normalised findings -> policy -> exit code
+  |-- sast control         -> Bandit    -> normalised findings -> policy -> exit code
+  |-- dependencies control -> pip-audit -> normalised findings -> policy -> exit code
   +-- summary -> GitHub step summary + artifact
 ```
 
@@ -42,7 +43,7 @@ Then request `http://127.0.0.1:8000/health` or
 ```powershell
 python -m security_gate            # all controls, policy applied, exit code set
 python -m security_gate --control sast
-python -m pip_audit -r requirements.txt
+python -m security_gate --control dependencies
 gitleaks detect --config .gitleaks.toml --no-banner
 ```
 
@@ -83,12 +84,44 @@ fail.
 python -m pytest tests/test_security_gate.py -v
 ```
 
+### Dependency policy
+
+pip-audit audits the **installed environment**, not just the requirements files,
+because the requirements files list only direct dependencies while the resolved
+environment is what actually runs.
+
+pip-audit does not attach a severity rating to an advisory, so the gate does not
+invent one. For a dependency set this small the rule is simple and defensible:
+**any package version with a known advisory blocks the build.** The remediation
+is to upgrade the package, never to lower the threshold.
+
+A non-zero pip-audit exit with no parsed findings, an unparsable report, or a
+report without a dependency list is treated as `UNAVAILABLE` (exit code 2). This
+matters because an unreachable vulnerability database otherwise looks exactly
+like a clean scan.
+
+#### Worked example from this repository
+
+The first run of this control was not clean. It reported seven advisories:
+
+| Package | Version | Advisories | Resolution |
+|---|---|---|---|
+| `pip` | 25.0.1 | 6, including PYSEC-2026-196 / CVE-2026-8643 | Upgrade; CI already installs the latest pip |
+| `pytest` | 8.3.5 | PYSEC-2026-1845 | Pinned to `pytest==9.0.3` in `requirements-dev.txt` |
+
+To investigate a dependency finding: read the advisory behind the identifier and
+its aliases, check whether your code reaches the affected code path, prefer the
+lowest release listed in `fix_versions`, re-run the control to confirm the
+advisory is gone, and run the test suite to confirm the upgrade broke nothing.
+If no fix exists, the finding needs a documented, reviewed decision rather than
+a silent suppression.
+
 ## CI workflow
 
 `.github/workflows/security.yml` runs on pushes to `main` and pull requests. It
 checks out source, installs pinned development tools, runs unit tests, runs the
-static analysis security gate, runs pip-audit, runs Gitleaks, validates workflow
-permissions, and uploads the security summary and scanner reports.
+security gate (static analysis and dependency auditing), runs Gitleaks,
+validates workflow permissions, and uploads the security summary.
 The workflow has read-only repository contents permission; no secrets are exposed
 to application steps. All third-party actions are pinned to full commit SHAs, with
 the corresponding release recorded in a trailing comment.

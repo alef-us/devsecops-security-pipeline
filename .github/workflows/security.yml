@@ -29,11 +29,8 @@ jobs:
       - name: Run application tests
         run: python -m pytest
 
-      - name: Run static analysis security gate
-        run: python -m security_gate --control sast --summary-file security-summary.md
-
-      - name: Run dependency audit
-        run: python -m pip_audit -r requirements.txt -f json -o pip-audit-report.json
+      - name: Run security gate
+        run: python -m security_gate --summary-file security-summary.md
 
       - name: Run secret detection
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
@@ -58,5 +55,4 @@ jobs:
           name: security-reports
           path: |
             security-summary.md
-            pip-audit-report.json
           if-no-files-found: warn
