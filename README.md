@@ -43,6 +43,13 @@ python app.py
 Then request `http://127.0.0.1:8000/health` or
 `http://127.0.0.1:8000/hello?name=Alice`.
 
+Bandit, pip-audit, and zizmor are installed by `requirements-dev.txt`. Gitleaks
+is a standalone binary and is not on PyPI; download the release that matches
+your platform, verify its published SHA-256 checksum, and either put it on
+`PATH`, place it in `.tools/`, or point `GITLEAKS_PATH` at it. The CI workflow
+does exactly that, checksum included. Without it the `secrets` control reports
+`UNAVAILABLE`, which is a failure rather than a pass.
+
 ## Security checks
 
 ```powershell
@@ -60,6 +67,49 @@ Gate exit codes:
 | 0 | Every control passed the documented policy |
 | 1 | A control reported a finding that violates the policy |
 | 2 | A control could not run; this is a failure, never a pass |
+
+### Example output
+
+A passing run. The eight `LOW`/`HIGH` findings are genuine — these modules do
+call `subprocess` — and are reported rather than suppressed, because hiding a
+true finding to get a clean report is how a gate stops being useful:
+
+```text
+# Security gate summary
+
+| Control | Status | Detail |
+|---|---|---|
+| dependencies | PASS | No known vulnerabilities in 35 scanned package(s). |
+| sast | PASS | No blocking findings. 8 finding(s) below the policy threshold require manual triage only. |
+| secrets | PASS | No secrets detected. |
+| workflows | PASS | No blocking findings. 0 finding(s) below the policy threshold require manual triage only. |
+
+## Findings for manual triage
+
+- sast: B404 [severity=LOW confidence=HIGH] security_gate/bandit_control.py:6 - Consider possible security implications associated with the subprocess module.
+- sast: B603 [severity=LOW confidence=HIGH] security_gate/bandit_control.py:82 - subprocess call - check for execution of untrusted input.
+...
+```
+
+A failing run. This is the real output from the first draft of this project's
+own Dependabot configuration, which the workflow audit rejected:
+
+```text
+# Security gate summary
+
+| Control | Status | Detail |
+|---|---|---|
+| workflows | FAIL | 2 workflow finding(s) violate the policy. |
+
+## Blocking findings
+
+- workflows: dependabot-cooldown [severity=MEDIUM confidence=HIGH] .github/dependabot.yml:8 (insufficient implicit default-days (less than 7)) - insufficient cooldown in Dependabot updates
+- workflows: dependabot-cooldown [severity=MEDIUM confidence=HIGH] .github/dependabot.yml:25 (insufficient implicit default-days (less than 7)) - insufficient cooldown in Dependabot updates
+```
+
+Exit code 1, so the step fails and the pipeline stops. The same summary is
+written to the GitHub step summary and uploaded as an artifact, so a failure is
+readable without opening the raw logs.
 
 ### Static analysis policy
 
@@ -268,14 +318,18 @@ also a failure; it must not be interpreted as a clean result.
 
 ## Threat model
 
+See [THREAT_MODEL.md](./THREAT_MODEL.md) for assets, trust boundaries,
+attackers, the fourteen threats this pipeline addresses, and — just as
+important — the residual risks it does not.
+
 | Area | Summary |
 |---|---|
-| Assets | Source code, dependency integrity, CI token, scanner reports |
-| Trust boundaries | Developer workstation, GitHub repository, pull-request workflow, runner |
-| Potential attackers | Malicious contributor, dependency maintainer, compromised action, accidental secret commit |
-| Main threats | Injection in user input, vulnerable dependency, leaked credential, workflow supply-chain abuse |
-| Mitigations | Strict input validation, unit tests, Bandit, pip-audit, Gitleaks, least-privilege permissions, SHA-pinned actions |
-| Residual risks | Tool false negatives, action release risk, transitive supply-chain compromise, unreviewed logic flaws |
+| Assets | Source code integrity, the CI job token, dependency and action integrity, scanner results, developer credentials |
+| Trust boundaries | Workstation to GitHub, pull request to runner, public internet to runner, runner to GitHub API |
+| Potential attackers | Opportunistic contributor, compromised upstream maintainer, secret harvester, careless maintainer |
+| Main threats | Unsafe code pattern, vulnerable dependency, leaked credential, stolen job token, malicious action version, a scanner that silently stops working |
+| Mitigations | Input validation, four blocking controls, CodeQL, least-privilege permissions, SHA-pinned actions, checksum-verified binaries, Dependabot cooldown, negative tests |
+| Residual risks | Scanner false negatives, logic and authorisation flaws, advisory lag, transitive supply-chain compromise, no runtime testing |
 
 ## Triage and limitations
 
@@ -291,3 +345,21 @@ means the application is completely secure.
 This repository demonstrates incremental security gates, negative tests for the
 controls themselves, explicit workflow permissions, reproducible tool versions,
 safe handling of false positives, and honest reporting of scanner limitations.
+
+Three decisions are worth defending in particular:
+
+- **The policy lives in code, not in the workflow.** `security_gate/policy.py`
+  is the only place a threshold is defined, so the documentation and the
+  pipeline cannot drift apart.
+- **Unavailable is not a pass.** A missing or crashed scanner exits 2 and fails
+  the build. The most dangerous failure mode of a security pipeline is a green
+  check that proved nothing.
+- **Every control has a negative test.** A scanner that silently stops matching
+  is indistinguishable from a clean repository, so each control is tested
+  against a known-bad fixture rather than trusted.
+
+Each of the four scanners also caught something real here: an outdated `pip` and
+`pytest` with published advisories, a job token persisted by `actions/checkout`,
+a credential-shaped literal that GitHub push protection blocked before it
+landed, and a missing Dependabot cooldown in a file written while building this
+pipeline.
