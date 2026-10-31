@@ -16,6 +16,9 @@ security_gate (policy engine)
   |-- secrets control      -> Gitleaks  -> normalised findings -> policy -> exit code
   |-- workflows control    -> zizmor    -> normalised findings -> policy -> exit code
   +-- summary -> GitHub step summary + artifact
+
+CodeQL runs as a separate workflow and reports to GitHub code scanning.
+Dependabot proposes dependency and action updates, which must pass the gate.
 ```
 
 The service exposes `GET /health` and `GET /hello?name=...`. It has no database,
@@ -227,6 +230,35 @@ checks out source with full history, installs pinned development tools, installs
 a checksum-verified Gitleaks binary, runs unit tests, runs the security gate
 (static analysis, dependency auditing, secret detection, and workflow
 auditing), and uploads the security summary.
+
+`.github/workflows/codeql.yml` runs CodeQL separately, on pushes, pull requests,
+and a weekly schedule. It complements Bandit rather than duplicating it: Bandit
+matches known-bad patterns within a single file, while CodeQL performs data-flow
+analysis across the project and can follow untrusted input from an entry point
+to a sink. It is a separate workflow because it needs `security-events: write`
+to upload results, and the security gate must not hold that permission.
+
+The weekly schedule matters: a scanner's rules change even when the code does
+not, so a repository that only scans on push stops being re-evaluated the moment
+development pauses.
+
+### Dependabot
+
+`.github/dependabot.yml` keeps the Python tooling and the action pins current.
+It is configured conservatively, because an update bot is itself a supply-chain
+path into the repository:
+
+- **Weekly**, not daily, and limited to three open pull requests per ecosystem.
+- **A seven-day cooldown** before adopting a freshly published release. A
+  compromised package is usually caught in the first days after publication.
+- **Security tooling is grouped** into one pull request, so the review is one
+  coherent change instead of three competing ones.
+- Every update still has to pass the full security gate before it can merge, and
+  an action pin is only ever moved to another commit SHA.
+
+The cooldown was not in the first draft of that file. This project's own
+workflow audit reported `dependabot-cooldown` against it, which is the gate
+doing its job on configuration the author had just written.
 The workflow has read-only repository contents permission; no secrets are exposed
 to application steps. All third-party actions are pinned to full commit SHAs, with
 the corresponding release recorded in a trailing comment.

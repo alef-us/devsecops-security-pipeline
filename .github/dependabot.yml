@@ -1,0 +1,39 @@
+# Conservative on purpose: a dependency bot is itself a supply-chain path into
+# the repository, so it is scheduled weekly rather than daily and is limited to
+# a small number of open pull requests. Every update still has to pass the full
+# security gate before it can be merged, and an action pin is only ever moved
+# to another commit SHA.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    # Wait before adopting a freshly published release. A compromised package is
+    # most often caught in the first days after publication, so a cooldown keeps
+    # this repository out of that window.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+    groups:
+      # One pull request for the security tooling keeps the review focused on a
+      # single, coherent change instead of three competing ones.
+      security-tooling:
+        patterns:
+          - "bandit"
+          - "pip-audit"
+          - "zizmor"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"

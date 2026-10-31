@@ -28,6 +28,9 @@ Do not disclose exploitable details publicly until a fix or mitigation is availa
   scanner is never reported as a pass.
 - No finding is suppressed without a written justification. `.gitleaks.toml`
   currently defines no allowlist entries.
+- CodeQL findings are reported to GitHub code scanning rather than through the
+  gate. They are reviewed there; a genuine high-severity result should be fixed
+  before release, not dismissed.
 - Ambiguous findings require manual investigation. Deleting a secret from the
   latest commit does not remove it from Git history; rotate a real credential and
   rewrite history only through an agreed repository-maintenance process.
