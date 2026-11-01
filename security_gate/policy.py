@@ -20,16 +20,17 @@ SAST_BLOCKING_CONFIDENCE = Severity.MEDIUM
 def is_blocking_sast_finding(finding: Finding) -> bool:
     """Return True when a static-analysis finding violates the policy.
 
-    UNKNOWN is deliberately treated as blocking. If the gate cannot interpret a
-    label it must not assume the finding is harmless.
+    An unrecognised severity label blocks unconditionally. If the gate cannot
+    interpret the severity it must not assume the finding is harmless, and it
+    must not let a low confidence score rescue it either. Once the severity is
+    understood, both axes have to clear their thresholds.
     """
-    severity_blocks = (
-        finding.severity is Severity.UNKNOWN or finding.severity >= SAST_BLOCKING_SEVERITY
-    )
+    if finding.severity is Severity.UNKNOWN:
+        return True
     confidence_blocks = (
         finding.confidence is Severity.UNKNOWN or finding.confidence >= SAST_BLOCKING_CONFIDENCE
     )
-    return severity_blocks and confidence_blocks
+    return finding.severity >= SAST_BLOCKING_SEVERITY and confidence_blocks
 
 
 def is_blocking_dependency_finding(finding: Finding) -> bool:
@@ -58,8 +59,8 @@ def is_blocking_secret_finding(finding: Finding) -> bool:
 
 
 #: A workflow finding blocks when its severity reaches this level, regardless of
-#: the scanner's confidence. The workflow surface here is a single file, so
-#: manually reviewing a low-confidence finding is cheap, while a missed
+#: the scanner's confidence. The workflow surface is small and changes rarely,
+#: so manually reviewing a low-confidence finding is cheap, while a missed
 #: workflow weakness can expose the job token to every later step.
 WORKFLOW_BLOCKING_SEVERITY = Severity.MEDIUM
 

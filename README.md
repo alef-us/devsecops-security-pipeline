@@ -116,15 +116,16 @@ readable without opening the raw logs.
 A Bandit finding blocks the build when **both** its severity and its confidence
 are `MEDIUM` or higher. A finding below that threshold is printed under
 "Findings for manual triage" and does not block. An unrecognised severity label
-is treated as blocking, because a label the gate cannot interpret has not been
-shown to be harmless.
+blocks unconditionally, because a label the gate cannot interpret has not been
+shown to be harmless — and a low confidence score is not allowed to rescue it.
 
-The production scan currently reports two low-severity Bandit findings
-(`B404` and `B603`) in `security_gate/bandit_control.py`. They are genuine
-matches, not false positives: the module really does invoke `subprocess`. They
-do not block because the command is a fixed argument list, is never passed
-through a shell, and never includes user-controlled input. They are left visible
-rather than suppressed so that the triage decision stays reviewable.
+The production scan currently reports eight low-severity Bandit findings
+(`B404` and `B603`, one pair in each of the four control adapters under
+`security_gate/`). They are genuine matches, not false positives: those modules
+really do invoke `subprocess` in order to run the scanners. They do not block
+because each command is a fixed argument list, is never passed through a shell,
+and never includes user-controlled input. They are left visible rather than
+suppressed so that the triage decision stays reviewable.
 
 ### Proving the control works
 
@@ -155,6 +156,13 @@ A non-zero pip-audit exit with no parsed findings, an unparsable report, or a
 report without a dependency list is treated as `UNAVAILABLE` (exit code 2). This
 matters because an unreachable vulnerability database otherwise looks exactly
 like a clean scan.
+
+The same applies to an individual package. pip-audit marks a dependency it could
+not resolve with `skip_reason` and still exits 0, so nothing in the exit code
+reveals it. The gate inspects every entry and reports `UNAVAILABLE` if any
+package was skipped: a package that was not audited has not been proven clean,
+and counting it as clean would be exactly the false green this gate exists to
+prevent.
 
 #### Worked example from this repository
 
@@ -227,9 +235,10 @@ reports `UNAVAILABLE` rather than passing when it cannot find one.
 The workflow itself is attack surface, so it is audited with
 [zizmor](https://docs.zizmor.sh/). A workflow finding blocks when its severity
 is `MEDIUM` or higher, **regardless of the scanner's confidence**. That is
-stricter than the static analysis rule on purpose: this project has one
-workflow file, so reviewing a low-confidence finding costs minutes, while a
-missed workflow weakness exposes the job token to every later step.
+stricter than the static analysis rule on purpose: the workflow surface is small
+and changes rarely, so reviewing a low-confidence finding costs minutes, while a
+missed workflow weakness exposes the job token to every later step. The audit
+covers both workflow files and `.github/dependabot.yml`.
 
 This control replaced an earlier step that asserted the workflow file contained
 the strings `permissions:` and `contents: read`. That check could not fail in

@@ -66,6 +66,11 @@ class PolicyTests(unittest.TestCase):
     def test_unknown_label_blocks(self):
         self.assertTrue(is_blocking_sast_finding(make_finding(Severity.UNKNOWN, Severity.HIGH)))
 
+    def test_unknown_severity_blocks_even_at_low_confidence(self):
+        # A severity the gate cannot interpret must not be rescued by a low
+        # confidence score; the finding has not been shown to be harmless.
+        self.assertTrue(is_blocking_sast_finding(make_finding(Severity.UNKNOWN, Severity.LOW)))
+
 
 class ExitCodeTests(unittest.TestCase):
     def result(self, status: ControlStatus) -> ControlResult:
@@ -149,6 +154,22 @@ class DependencyReportTests(unittest.TestCase):
         self.assertEqual(finding.location, "vulnerable-package==1.2.3")
         self.assertIn("fixed in 1.2.4", finding.description)
         self.assertIn("CVE-0000-0001", finding.description)
+
+    def test_skipped_package_is_unavailable_not_clean(self):
+        # pip-audit exits 0 when it merely skips a package, so the exit code
+        # reveals nothing. A package that was never audited must not be
+        # reported as having no known vulnerabilities.
+        payload = {
+            "dependencies": [
+                {"name": "safe-package", "version": "1.0.0", "vulns": []},
+                {"name": "mystery-package", "skip_reason": "could not be audited"},
+            ],
+            "fixes": [],
+        }
+        result = pip_audit_control.evaluate_report(payload)
+        self.assertEqual(result.status, ControlStatus.UNAVAILABLE)
+        self.assertIn("mystery-package", result.detail)
+        self.assertEqual(overall_exit_code([result]), EXIT_CONTROL_UNAVAILABLE)
 
     def test_missing_fix_version_is_stated_explicitly(self):
         payload = {

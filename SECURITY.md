@@ -12,11 +12,13 @@ Do not disclose exploitable details publicly until a fix or mitigation is availa
 ## Security gates
 
 - The static analysis gate blocks a Bandit finding whose severity and confidence
-  are both `MEDIUM` or higher, and blocks any finding whose severity label the
-  gate cannot interpret. Lower findings are reported for manual triage.
-- pip-audit blocks any declared or installed package version that has a known
-  advisory. pip-audit publishes no severity rating, so the gate does not invent
-  one; the fix is to upgrade the package.
+  are both `MEDIUM` or higher, and blocks unconditionally any finding whose
+  severity label the gate cannot interpret. Lower findings are reported for
+  manual triage.
+- pip-audit blocks any installed package version that has a known advisory, and
+  reports `UNAVAILABLE` if a package could not be audited at all. pip-audit
+  publishes no severity rating, so the gate does not invent one; the fix is to
+  upgrade the package.
 - Gitleaks blocks every match, scanning commit history as well as the working
   tree. Values are redacted, so a detected secret is never written to a log, an
   artifact, or the job summary. A fake credential used for a negative test is

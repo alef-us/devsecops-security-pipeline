@@ -54,6 +54,23 @@ def evaluate_report(payload: dict) -> ControlResult:
             detail="pip-audit returned a report without a dependency list.",
         )
 
+    # A dependency carrying skip_reason was never audited: pip-audit could not
+    # resolve it against the advisory database. It still exits 0, so nothing
+    # else catches this. A package that was not scanned has not been proven
+    # clean, and reporting it as clean is the false-green this gate exists to
+    # prevent.
+    skipped = [
+        f"{dependency.get('name', '?')} ({dependency['skip_reason']})"
+        for dependency in payload["dependencies"]
+        if dependency.get("skip_reason")
+    ]
+    if skipped:
+        return ControlResult(
+            name=CONTROL_NAME,
+            status=ControlStatus.UNAVAILABLE,
+            detail=f"pip-audit could not audit {len(skipped)} package(s): {'; '.join(skipped)}.",
+        )
+
     findings = parse_report(payload)
     blocking = [finding for finding in findings if is_blocking_dependency_finding(finding)]
     scanned = len(payload["dependencies"])
